@@ -1,14 +1,16 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import time
 
 import serial
 import RPi.GPIO as GPIO
 from var_dump import var_dump
 from multiprocessing import Process, Value
+import queue
 import multiprocessing
-import Queue
 import datetime
 import sys
+import joblib
+import numpy as np
 
 from azure.iot.device import IoTHubDeviceClient, Message
 
@@ -76,6 +78,7 @@ def listen_uart_rx(state, IOT_HUB_CONNECTION_STRING):
       time.sleep(0.03)
       data_left = ser.inWaiting()
       received_data += ser.read(data_left)
+      received_data = received_data.decode('utf-8')
       #var_dump(received_data)
       
       if (received_data.find("W (0) MAIN:") > -1):
@@ -114,6 +117,7 @@ if __name__ == '__main__':
       state = Value('i', 0)
       myIotHubClient = IoTHubDeviceClient.create_from_connection_string(IOT_HUB_CONNECTION_STRING)
       myIotHubClient.connect()
+      predicter = joblib.load('./mymodel.joblib')
 
       while True:
          if (debug):
@@ -141,7 +145,7 @@ if __name__ == '__main__':
          #wait for signal from child thread
          try:
             lastValue = Q.get(timeout=1.0)
-         except Queue.Empty:
+         except queue.Empty:
             print("Queue were empty, measurement probably timeouted!")
             with state.get_lock():
                state.value = 0
@@ -154,12 +158,13 @@ if __name__ == '__main__':
          avg_room_temp = round(sum(room_temps) /float(len(room_temps))/100, 2)
          avg_body_temp = round(sum(body_temps) /float(len(body_temps))/100, 2)
          
-         room_temp = avg_room_temp
-         body_temp = avg_body_temp
-
+         merged_temps = room_temps + body_temps
 
          datetime_object = datetime.datetime.now()
-         print("%s:%s:%s - Room avg. temp: %f; Body avg. temp: %f;" %(datetime_object.hour,datetime_object.minute,datetime_object.second,room_temp,body_temp))
+
+         result_body_temp = predicter.predict(np.array(merged_temps).reshape(1,-1))
+
+         print("%s:%s:%s - Room avg. temp: %f; Body avg. temp: %f; Predicted result body temp: %f" %(datetime_object.hour,datetime_object.minute,datetime_object.second,avg_room_temp,avg_body_temp, result_body_temp))
 
          if(debug):
             #write down measured value for debug purposes
@@ -169,16 +174,18 @@ if __name__ == '__main__':
                   measurementsFile.write( str(val) + "\t" )
                for val in body_temps:
                   measurementsFile.write( str(val) + "\t" )
+
+               measurementsFile.write( str(result_body_temp) + "\t" )
                measurementsFile.write( "\n" )
          else:
             #send data to IoT Hub
             try:
-               iot_hub_payload_template = '{{"roomTemp": {room_temp},"bodyTemp": {body_temp}}}'
+               iot_hub_payload_template = '{{"bodyTemp": {result_body_temp}}}'
 
-               iot_hub_payload = iot_hub_payload_template.format(room_temp=room_temp, body_temp=body_temp)
+               iot_hub_payload = iot_hub_payload_template.format(result_body_temp = result_body_temp)
                iot_hub_message = Message(iot_hub_payload)
 
-               if body_temp > 38.0:
+               if result_body_temp > 38.0:
                   iot_hub_message.custom_properties["temperatureAlert"] = "true"
                else:
                   iot_hub_message.custom_properties["temperatureAlert"] = "false"
