@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# (c) Vaclav Jirovsky, 2020
+# Licence (based on regulation for PRUSA face shields)
+#  We share these files under non-commercial licence. 
+#  It would be great if you donated this device to those in need for free. 
+#  If you need to cover your production costs, we are ok with you selling the device  for production cost. 
+#  However, we do not want to see these devices on eBay for 1000€.
 import time
 
 import serial
